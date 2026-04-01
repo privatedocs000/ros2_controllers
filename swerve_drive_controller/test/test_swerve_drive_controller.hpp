@@ -212,7 +212,7 @@ protected:
       auto cmd_ptr = std::make_shared<hardware_interface::CommandInterface>(
         wheel_joint_names_[i], HW_IF_VELOCITY, &wheel_vel_cmds_[i]);
       command_interface_ptrs_.push_back(cmd_ptr);
-      command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr));
+      command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr, nullptr));
     }
 
     // Steering position interfaces
@@ -238,7 +238,7 @@ protected:
       auto cmd_ptr = std::make_shared<hardware_interface::CommandInterface>(
         steering_joint_names_[i], HW_IF_POSITION, &steering_pos_cmds_[i]);
       command_interface_ptrs_.push_back(cmd_ptr);
-      command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr));
+      command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr, nullptr));
     }
 
     controller_->assign_interfaces(std::move(command_ifs), std::move(state_ifs));
