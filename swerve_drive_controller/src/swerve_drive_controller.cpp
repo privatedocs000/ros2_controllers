@@ -58,13 +58,13 @@ void Wheel::set_velocity(double velocity) { velocity_.get().set_value(velocity);
 double Wheel::get_feedback() { return Wheel::feedback_.get().get_optional().value(); }
 
 Axle::Axle(
-  std::reference_wrapper<hardware_interface::LoanedCommandInterface> position,
+  std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity,
   std::reference_wrapper<const hardware_interface::LoanedStateInterface> feedback, std::string name)
-: position_(position), feedback_(feedback), name_(std::move(name))
+: velocity_(velocity), feedback_(feedback), name_(std::move(name))
 {
 }
 
-void Axle::set_position(double position) { position_.get().set_value(position); }
+void Axle::set_velocity(double velocity) { velocity_.get().set_value(velocity); }
 
 double Axle::get_feedback() { return Axle::feedback_.get().get_optional().value(); }
 
@@ -106,10 +106,10 @@ InterfaceConfiguration SwerveController::command_interface_configuration() const
   conf_names.push_back(params_.front_right_wheel_joint + "/" + HW_IF_VELOCITY);
   conf_names.push_back(params_.rear_left_wheel_joint + "/" + HW_IF_VELOCITY);
   conf_names.push_back(params_.rear_right_wheel_joint + "/" + HW_IF_VELOCITY);
-  conf_names.push_back(params_.front_left_axle_joint + "/" + HW_IF_POSITION);
-  conf_names.push_back(params_.front_right_axle_joint + "/" + HW_IF_POSITION);
-  conf_names.push_back(params_.rear_left_axle_joint + "/" + HW_IF_POSITION);
-  conf_names.push_back(params_.rear_right_axle_joint + "/" + HW_IF_POSITION);
+  conf_names.push_back(params_.front_left_axle_joint + "/" + HW_IF_VELOCITY);
+  conf_names.push_back(params_.front_right_axle_joint + "/" + HW_IF_VELOCITY);
+  conf_names.push_back(params_.rear_left_axle_joint + "/" + HW_IF_VELOCITY);
+  conf_names.push_back(params_.rear_right_axle_joint + "/" + HW_IF_VELOCITY);
   return {interface_configuration_type::INDIVIDUAL, conf_names};
 }
 
@@ -308,8 +308,7 @@ CallbackReturn SwerveController::on_activate(const rclcpp_lifecycle::State &)
       RCLCPP_ERROR(logger, "ERROR IN FETCHING axle handle for: %s", axle_joint_names[i].c_str());
       return CallbackReturn::ERROR;
     }
-    axle_handles_[i]->set_position(0.0);
-    previous_steering_angles_[i] = axle_handles_[i]->get_feedback();
+    axle_handles_[i]->set_velocity(0.0);
   }
 
   is_halted_ = false;
@@ -359,8 +358,6 @@ controller_interface::return_type SwerveController::update_reference_from_subscr
 controller_interface::return_type SwerveController::update_and_write_commands(
   const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
 {
-  auto logger = get_node()->get_logger();
-
   // If handles are empty (controller deactivated), return early
   if (wheel_handles_.empty() || axle_handles_.empty())
   {
@@ -377,92 +374,30 @@ controller_interface::return_type SwerveController::update_and_write_commands(
     return controller_interface::return_type::OK;
   }
 
-  auto wheel_command = swerveDriveKinematics_.compute_wheel_commands(
-    linear_x_cmd, linear_y_cmd, angular_cmd, params_.wheel_radius);
-
-  std::array<double, 4> current_steering_angles{};
+  // Read current steer angles from state interfaces — required input for the PCV C matrix
+  std::array<double, 4> steer_angles{};
   for (std::size_t i = 0; i < 4; ++i)
   {
-    if (axle_handles_[i].has_value())
-    {
-      current_steering_angles[i] = axle_handles_[i]->get_feedback();
-    }
-    else
-    {
-      current_steering_angles[i] = previous_steering_angles_[i];
-    }
+    steer_angles[i] = axle_handles_[i].has_value() ? axle_handles_[i]->get_feedback() : 0.0;
   }
 
-  wheel_command =
-    swerveDriveKinematics_.optimize_wheel_commands(wheel_command, current_steering_angles);
+  // PCV C-matrix kinematics: [steer_vel, drive_vel] = C(q) @ [vx, vy, wz]
+  // Matches base_controller.py Caster.set_velocities() and Vehicle.update_state() logic.
+  auto caster_cmds = swerveDriveKinematics_.compute_caster_commands(
+    linear_x_cmd, linear_y_cmd, angular_cmd,
+    steer_angles, params_.wheel_radius,
+    params_.caster_arm_offset_x, params_.caster_arm_offset_y);
 
-  std::vector<std::tuple<WheelCommand &, double, std::string>> wheel_data = {
-    {wheel_command[0], params_.front_left_velocity_threshold / params_.wheel_radius,
-     "front_left_wheel"},
-    {wheel_command[1], params_.front_right_velocity_threshold / params_.wheel_radius,
-     "front_right_wheel"},
-    {wheel_command[2], params_.rear_left_velocity_threshold / params_.wheel_radius,
-     "rear_left_wheel"},
-    {wheel_command[3], params_.rear_right_velocity_threshold / params_.wheel_radius,
-     "rear_right_wheel"}};
-
-  for (const auto & [wheel_command_, threshold, label] : wheel_data)
-  {
-    if (wheel_command_.drive_velocity > threshold)
-    {
-      wheel_command_.drive_velocity = threshold;
-    }
-  }
-
-  const double min_steering_error = M_PI / 6.0;  // 30 degrees
-  for (std::size_t i = 0; i < 4; i++)
-  {
-    double steering_error = std::abs(
-      angles::shortest_angular_distance(
-        current_steering_angles[i], wheel_command[i].steering_angle));
-
-    double velocity_scale = 1.0;
-    if (steering_error > min_steering_error)
-    {
-      if (steering_error >= 1.5608)  // ~89.5 degrees
-      {
-        // cos(1.5608) = 0.01
-        velocity_scale = 0.01 / std::cos(min_steering_error);
-      }
-      else
-      {
-        // Scale velocity based on steering error using cosine function
-        velocity_scale = std::cos(steering_error) / std::cos(min_steering_error);
-      }
-    }
-
-    // Apply velocity scaling
-    wheel_command[i].drive_velocity *= velocity_scale;
-    wheel_command[i].drive_angular_velocity *= velocity_scale;
-  }
-
-  for (std::size_t i = 0; i < 4; i++)
+  for (std::size_t i = 0; i < 4; ++i)
   {
     if (!axle_handles_[i].has_value() || !wheel_handles_[i].has_value())
     {
       throw std::runtime_error(
-        "Axle or Wheel handle is nullptr for: " + axle_joint_names[i] + " / " +
+        "Axle or Wheel handle is invalid for: " + axle_joint_names[i] + " / " +
         wheel_joint_names[i]);
     }
-
-    const bool is_stop = (std::fabs(linear_x_cmd) < EPS) && (std::fabs(linear_y_cmd) < EPS) &&
-                         (std::fabs(angular_cmd) < EPS);
-
-    if (is_stop)
-    {
-      axle_handles_[i]->set_position(previous_steering_angles_[i]);
-    }
-    else
-    {
-      axle_handles_[i]->set_position(wheel_command[i].steering_angle);
-      previous_steering_angles_[i] = wheel_command[i].steering_angle;
-    }
-    wheel_handles_[i]->set_velocity(wheel_command[i].drive_angular_velocity);
+    axle_handles_[i]->set_velocity(caster_cmds[i].steer_vel);
+    wheel_handles_[i]->set_velocity(caster_cmds[i].drive_vel);
   }
 
   const auto update_dt = time - previous_update_timestamp_;
@@ -475,8 +410,9 @@ controller_interface::return_type SwerveController::update_and_write_commands(
   {
     if (params_.open_loop)
     {
-      velocity_array[i] = wheel_command[i].drive_velocity;
-      steering_angle_array[i] = wheel_command[i].steering_angle;
+      // Use commanded drive velocity (rad/s → m/s) and current steer angle for open-loop odom
+      velocity_array[i] = caster_cmds[i].drive_vel * params_.wheel_radius;
+      steering_angle_array[i] = steer_angles[i];
     }
     else
     {
@@ -581,7 +517,7 @@ void SwerveController::halt()
   }
   for (std::size_t i = 0; i < axle_handles_.size(); ++i)
   {
-    axle_handles_[i]->set_position(0.0);
+    axle_handles_[i]->set_velocity(0.0);
   }
 }
 

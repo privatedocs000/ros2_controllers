@@ -72,15 +72,15 @@ class Axle
 {
 public:
   Axle(
-    std::reference_wrapper<hardware_interface::LoanedCommandInterface> position,
+    std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity,
     std::reference_wrapper<const hardware_interface::LoanedStateInterface> feedback,
     std::string name);
 
-  void set_position(double position);
+  void set_velocity(double velocity);
   double get_feedback();
 
 private:
-  std::reference_wrapper<hardware_interface::LoanedCommandInterface> position_;
+  std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity_;
   std::reference_wrapper<const hardware_interface::LoanedStateInterface> feedback_;
   std::string name_;
 };
@@ -126,8 +126,9 @@ private:
   std::optional<T> get_interface_object(
     std::vector<hardware_interface::LoanedCommandInterface> & command_interfaces,
     const std::vector<hardware_interface::LoanedStateInterface> & state_interfaces,
-    const std::string & name, const std::string & /*interface_suffix*/,
-    const std::string & hw_if_type)
+    const std::string & name,
+    const std::string & cmd_hw_if_type,
+    const std::string & state_hw_if_type)
   {
     auto logger = rclcpp::get_logger("SwerveController");
 
@@ -138,33 +139,34 @@ private:
     }
 
     // Use get_prefix_name() to match joint name and get_interface_name() to match interface type
-    // This matches the pattern used in diff_drive_controller
     auto command_handle = std::find_if(
       command_interfaces.begin(), command_interfaces.end(),
-      [&name, &hw_if_type](const auto & interface)
+      [&name, &cmd_hw_if_type](const auto & interface)
       {
-        return interface.get_prefix_name() == name && interface.get_interface_name() == hw_if_type;
+        return interface.get_prefix_name() == name &&
+               interface.get_interface_name() == cmd_hw_if_type;
       });
 
     if (command_handle == command_interfaces.end())
     {
       RCLCPP_ERROR(
-        logger, "Unable to find command interface for: %s (expected: %s/%s, type: %s)",
-        name.c_str(), name.c_str(), hw_if_type.c_str(), hw_if_type.c_str());
+        logger, "Unable to find command interface for: %s (expected: %s/%s)",
+        name.c_str(), name.c_str(), cmd_hw_if_type.c_str());
       return std::nullopt;
     }
     auto state_handle = std::find_if(
       state_interfaces.begin(), state_interfaces.end(),
-      [&name, &hw_if_type](const auto & interface)
+      [&name, &state_hw_if_type](const auto & interface)
       {
-        return interface.get_prefix_name() == name && interface.get_interface_name() == hw_if_type;
+        return interface.get_prefix_name() == name &&
+               interface.get_interface_name() == state_hw_if_type;
       });
 
     if (state_handle == state_interfaces.end())
     {
       RCLCPP_ERROR(
-        logger, "Unable to find state interface for: %s (expected: %s/%s, type: %s)", name.c_str(),
-        name.c_str(), hw_if_type.c_str(), hw_if_type.c_str());
+        logger, "Unable to find state interface for: %s (expected: %s/%s)",
+        name.c_str(), name.c_str(), state_hw_if_type.c_str());
       return std::nullopt;
     }
     return T(std::ref(*command_handle), std::ref(*state_handle), name);
@@ -175,8 +177,9 @@ private:
     const std::vector<hardware_interface::LoanedStateInterface> & state_interfaces,
     const std::string & name)
   {
+    // Wheel: velocity command, velocity state
     return get_interface_object<Wheel>(
-      command_interfaces, state_interfaces, name, "/velocity", "velocity");
+      command_interfaces, state_interfaces, name, "velocity", "velocity");
   }
 
   inline std::optional<Axle> get_axle(
@@ -184,8 +187,9 @@ private:
     const std::vector<hardware_interface::LoanedStateInterface> & state_interfaces,
     const std::string & name)
   {
+    // Axle: velocity command (PCV steer), position state (CANcoder absolute angle)
     return get_interface_object<Axle>(
-      command_interfaces, state_interfaces, name, "/position", "position");
+      command_interfaces, state_interfaces, name, "velocity", "position");
   }
 
 protected:
@@ -196,7 +200,6 @@ protected:
   std::array<std::string, 4> axle_joint_names{};
 
   const double EPS = 1e-6;
-  std::array<double, 4> previous_steering_angles_{};
 
   std::shared_ptr<ParamListener> param_listener_;
   Params params_;

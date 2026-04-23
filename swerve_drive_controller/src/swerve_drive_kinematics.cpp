@@ -24,74 +24,53 @@ void SwerveDriveKinematics::calculate_wheel_position(
   double half_length = wheel_base / 2.0;
   double half_width = track_width / 2.0;
 
+  // Hub positions (h_x, h_y) — used as caster pivot reference in the C matrix.
   wheel_positions_[0] = {half_length - x_offset, half_width - y_offset};    // Front Left  (+x, +y)
   wheel_positions_[1] = {half_length - x_offset, -half_width - y_offset};   // Front Right (+x, -y)
   wheel_positions_[2] = {-half_length - x_offset, half_width - y_offset};   // Rear Left   (-x, +y)
   wheel_positions_[3] = {-half_length - x_offset, -half_width - y_offset};  // Rear Right  (-x, -y)
 }
 
-std::array<WheelCommand, 4> SwerveDriveKinematics::compute_wheel_commands(
-  double linear_velocity_x, double linear_velocity_y, double angular_velocity_z,
-  double wheel_radius)
+std::array<CasterCommand, 4> SwerveDriveKinematics::compute_caster_commands(
+  double vx, double vy, double wz,
+  const std::array<double, 4> & steer_angles,
+  double wheel_radius, double b_x, double b_y)
 {
-  std::array<WheelCommand, 4> wheel_commands;
+  // PCV C-matrix kinematics, matching base_controller.py (tidybot2) lines 243-248.
+  //
+  // For caster i at hub position (hx, hy) with current steer angle q:
+  //
+  //   C_steer[i,:] = [ sin(q)/b_x,  -cos(q)/b_x,  (-hx*cos(q) - hy*sin(q))/b_x - 1 ]
+  //   C_drive[i,:] = [ cos(q)/r - by*sin(q)/(bx*r),
+  //                    sin(q)/r + by*cos(q)/(bx*r),
+  //                    (hx*sin(q) - hy*cos(q))/r + by*(hx*cos(q) + hy*sin(q))/(bx*r) ]
+  //
+  //   steer_vel_i = C_steer[i,:] @ [vx, vy, wz]   (rad/s at steer column output shaft)
+  //   drive_vel_i = C_drive[i,:] @ [vx, vy, wz]   (rad/s at drive wheel)
 
-  if (wheel_radius <= 0.0)
-  {
-    std::cerr << "invalid wheel_radius <= 0.0\n";
-    // fallthrough: compute but set angular velocities to 0 to avoid div-by-zero
+  std::array<CasterCommand, 4> cmds;
+
+  for (std::size_t i = 0; i < 4; ++i) {
+    const double q  = steer_angles[i];
+    const double s  = std::sin(q);
+    const double c  = std::cos(q);
+    const double hx = wheel_positions_[i].first;
+    const double hy = wheel_positions_[i].second;
+
+    // C_steer row
+    cmds[i].steer_vel =
+      (s / b_x) * vx +
+      (-c / b_x) * vy +
+      ((-hx * c - hy * s) / b_x - 1.0) * wz;
+
+    // C_drive row
+    cmds[i].drive_vel =
+      (c / wheel_radius - b_y * s / (b_x * wheel_radius)) * vx +
+      (s / wheel_radius + b_y * c / (b_x * wheel_radius)) * vy +
+      ((hx * s - hy * c) / wheel_radius + b_y * (hx * c + hy * s) / (b_x * wheel_radius)) * wz;
   }
 
-  for (std::size_t i = 0; i < 4; i++)
-  {
-    const auto & [wx, wy] = wheel_positions_[i];
-
-    double vx = linear_velocity_x - angular_velocity_z * wy;
-    double vy = linear_velocity_y + angular_velocity_z * wx;
-
-    double linear_speed = std::hypot(vx, vy);
-    double steering = std::atan2(vy, vx);
-
-    wheel_commands[i].drive_velocity = linear_speed;
-
-    if (wheel_radius > 0.0)
-    {
-      wheel_commands[i].drive_angular_velocity = linear_speed / wheel_radius;  // rad/s
-    }
-    else
-    {
-      wheel_commands[i].drive_angular_velocity = 0.0;  // safe fallback
-    }
-
-    wheel_commands[i].steering_angle = steering;
-  }
-
-  return wheel_commands;
-}
-
-std::array<WheelCommand, 4> SwerveDriveKinematics::optimize_wheel_commands(
-  const std::array<WheelCommand, 4> & wheel_commands,
-  const std::array<double, 4> & current_steering_angles)
-{
-  std::array<WheelCommand, 4> optimized_commands = wheel_commands;
-
-  for (std::size_t i = 0; i < 4; i++)
-  {
-    double target_angle = wheel_commands[i].steering_angle;
-    double current_angle = current_steering_angles[i];
-
-    double angle_diff = angles::shortest_angular_distance(current_angle, target_angle);
-
-    if (std::abs(angle_diff) > M_PI_2)
-    {
-      optimized_commands[i].drive_velocity = -wheel_commands[i].drive_velocity;
-      optimized_commands[i].drive_angular_velocity = -wheel_commands[i].drive_angular_velocity;
-
-      optimized_commands[i].steering_angle = angles::normalize_angle(target_angle + M_PI);
-    }
-  }
-
-  return optimized_commands;
+  return cmds;
 }
 
 OdometryState SwerveDriveKinematics::update_odometry(

@@ -30,20 +30,21 @@ namespace swerve_drive_controller
 {
 
 /**
- * @brief Struct to represent the kinematics command for a single wheel .
+ * @brief Struct to represent the PCV kinematics command for a single caster.
+ *
+ * Both velocities are at the joint output shaft (after the gearbox).
+ * The hardware interface applies gear ratios and the steer-drive coupling term
+ * before sending to the motors.
  */
-
-struct WheelCommand
+struct CasterCommand
 {
-  double steering_angle;          // Steering angle in radians
-  double drive_velocity;          // Drive velocity in meters per second (m/s)
-  double drive_angular_velocity;  // Drive angular velocity in radians per second (rad/s)
+  double steer_vel;  // Steer column angular velocity (rad/s, output shaft)
+  double drive_vel;  // Drive wheel angular velocity (rad/s)
 };
 
 /**
  * @brief Struct to represent the odometry state of the robot.
  */
-
 struct OdometryState
 {
   double x;      // X position in meters
@@ -62,55 +63,53 @@ public:
 
   /**
    * @brief Sets necessary params required for kinematics calculation.
-   * @param wheel_base Distance between front and rear axles (meters).
-   * @param track_width Distance between left and right wheels (meters).
-   * @param x_offset Optional global x offset of wheel positions.
-   * @param y_offset Optional global y offset of wheel positions.
-   * @attention order enforced as: front_left, front_right, rear_left, rear_right
+   * @param wheel_base Distance between front and rear axle centerlines (meters).
+   * @param track_width Distance between left and right caster hub centerlines (meters).
+   * @param x_offset Optional global x offset (center-of-gravity correction).
+   * @param y_offset Optional global y offset.
+   * @attention Order enforced as: front_left, front_right, rear_left, rear_right.
+   *            wheel_positions_[i] stores the hub position (h_x, h_y) of caster i.
    */
   void calculate_wheel_position(
     double wheel_base, double track_width, double x_offset = 0.0, double y_offset = 0.0);
 
   /**
-   * @brief Compute the wheel commands based on robot velocity commands.
-   * @param linear_velocity_x Linear velocity in the x direction (m/s).
-   * @param linear_velocity_y Linear velocity in the y direction (m/s).
-   * @param angular_velocity_z Angular velocity about the z-axis (rad/s).
-   * @param wheel_radius Radius of the wheel (meters). Same radius used for all wheels.
-   * @return Array of wheel commands (steering angles, drive linear velocities (m/s),
-   *         and drive angular velocities (rad/s)).
+   * @brief Compute per-caster steer and drive velocity commands using PCV C-matrix kinematics.
+   *
+   * Implements the powered-caster vehicle kinematic model from base_controller.py (tidybot2).
+   * The C matrix maps body-frame velocity [vx, vy, wz] to joint-space velocities
+   * [steer_vel_i, drive_vel_i] for each caster, given the current steer angles.
+   *
+   * @param vx        Desired body-frame x velocity (m/s).
+   * @param vy        Desired body-frame y velocity (m/s).
+   * @param wz        Desired yaw rate (rad/s).
+   * @param steer_angles Current steer column angles for each caster (rad), read from state.
+   * @param wheel_radius Wheel radius (m).
+   * @param b_x       Caster arm x-offset from pivot to wheel contact (m). Must be non-zero.
+   * @param b_y       Caster arm lateral y-offset (m).
+   * @return Array of CasterCommand (steer_vel rad/s, drive_vel rad/s) for each caster.
    */
-  std::array<WheelCommand, 4> compute_wheel_commands(
-    double linear_velocity_x, double linear_velocity_y, double angular_velocity_z,
-    double wheel_radius);
-
-  /**
-   * @brief Optimize wheel commands to minimize steering rotation.
-   * If a wheel needs to rotate more than 90 degrees, flip the wheel velocity
-   * and adjust the steering angle by 180 degrees instead.
-   * @param wheel_commands The computed wheel commands.
-   * @param current_steering_angles Array of current steering angles (radians).
-   * @return Optimized wheel commands with minimal steering rotation.
-   */
-  std::array<WheelCommand, 4> optimize_wheel_commands(
-    const std::array<WheelCommand, 4> & wheel_commands,
-    const std::array<double, 4> & current_steering_angles);
+  std::array<CasterCommand, 4> compute_caster_commands(
+    double vx, double vy, double wz,
+    const std::array<double, 4> & steer_angles,
+    double wheel_radius, double b_x, double b_y);
 
   /**
    * @brief Update the odometry based on wheel velocities and elapsed time.
-   * @param wheel_velocities Array of measured wheel velocities (m/s).
-   * @param steering_angles Array of measured steering angles (radians).
+   * @param wheel_velocities Array of measured drive wheel linear velocities (m/s).
+   * @param steering_angles Array of measured steer column angles (radians).
    * @param dt Time step (seconds).
    * @return Updated odometry state.
    */
-
   OdometryState update_odometry(
     const std::array<double, 4> & wheel_velocities_, const std::array<double, 4> & steering_angles_,
     double dt);
 
 private:
-  std::array<std::pair<double, double>, 4> wheel_positions_;  // Wheel Positions
-  OdometryState odometry_;                                    // Current Odometry of the robot
+  // Hub positions for each caster: (h_x, h_y) relative to robot centre.
+  // Order: front_left, front_right, rear_left, rear_right.
+  std::array<std::pair<double, double>, 4> wheel_positions_;
+  OdometryState odometry_;  // Current odometry of the robot
 };
 }  // namespace swerve_drive_controller
 

@@ -60,7 +60,7 @@ TEST_F(SwerveDriveControllerTest, configure_succeeds_no_namespace)
   {
     EXPECT_EQ(
       command_interfaces.names[i + wheel_joint_names_.size()],
-      steering_joint_names_[i] + "/" + HW_IF_POSITION);
+      steering_joint_names_[i] + "/" + HW_IF_VELOCITY);
   }
   EXPECT_EQ(
     command_interfaces.type, controller_interface::interface_configuration_type::INDIVIDUAL);
@@ -288,16 +288,16 @@ TEST_F(SwerveDriveControllerTest, deactivate_then_activate)
     controller_interface::return_type::OK);
 
   std::vector<double> expected_wheel_vel_cmds = {10.0, 10.0, 10.0, 10.0};
-  std::vector<double> expected_steering_pos_cmds = {0.0, 0.0, 0.0, 0.0};
+  std::vector<double> expected_steering_vel_cmds = {0.0, 0.0, 0.0, 0.0};
   for (size_t i = 0; i < wheel_vel_cmds_.size(); i++)
   {
     EXPECT_DOUBLE_EQ(command_itfs_[i].get_optional().value(), expected_wheel_vel_cmds[i]);
   }
-  for (size_t i = 0; i < steering_pos_cmds_.size(); i++)
+  for (size_t i = 0; i < steering_vel_cmds_.size(); i++)
   {
     EXPECT_DOUBLE_EQ(
       command_itfs_[i + wheel_vel_cmds_.size()].get_optional().value(),
-      expected_steering_pos_cmds[i]);
+      expected_steering_vel_cmds[i]);
   }
 
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -341,11 +341,11 @@ TEST_F(SwerveDriveControllerTest, deactivate_then_activate)
   {
     EXPECT_DOUBLE_EQ(command_itfs_[i].get_optional().value(), expected_wheel_vel_cmds[i]);
   }
-  for (size_t i = 0; i < steering_pos_cmds_.size(); i++)
+  for (size_t i = 0; i < steering_vel_cmds_.size(); i++)
   {
     EXPECT_DOUBLE_EQ(
       command_itfs_[i + wheel_vel_cmds_.size()].get_optional().value(),
-      expected_steering_pos_cmds[i]);
+      expected_steering_vel_cmds[i]);
   }
 
   // Deactivate and cleanup
@@ -386,16 +386,16 @@ TEST_F(SwerveDriveControllerTest, command_with_zero_timestamp_is_accepted_with_w
     controller_interface::return_type::OK);
 
   std::vector<double> expected_wheel_vel_cmds = {10.0, 10.0, 10.0, 10.0};
-  std::vector<double> expected_steering_pos_cmds = {0.0, 0.0, 0.0, 0.0};
+  std::vector<double> expected_steering_vel_cmds = {0.0, 0.0, 0.0, 0.0};
   for (size_t i = 0; i < wheel_vel_cmds_.size(); i++)
   {
     EXPECT_DOUBLE_EQ(command_itfs_[i].get_optional().value(), expected_wheel_vel_cmds[i]);
   }
-  for (size_t i = 0; i < steering_pos_cmds_.size(); i++)
+  for (size_t i = 0; i < steering_vel_cmds_.size(); i++)
   {
     EXPECT_DOUBLE_EQ(
       command_itfs_[i + wheel_vel_cmds_.size()].get_optional().value(),
-      expected_steering_pos_cmds[i]);
+      expected_steering_vel_cmds[i]);
   }
 
   std::this_thread::sleep_for(std::chrono::milliseconds(300));

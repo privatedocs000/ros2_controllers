@@ -179,15 +179,15 @@ protected:
     state_itfs_.clear();
     state_itfs_.reserve(wheel_vel_states_.size() + steering_pos_states_.size());
     std::vector<hardware_interface::LoanedCommandInterface> command_ifs;
-    command_ifs.reserve(wheel_vel_cmds_.size() + steering_pos_cmds_.size());
+    command_ifs.reserve(wheel_vel_cmds_.size() + steering_vel_cmds_.size());
     command_itfs_.clear();
-    command_itfs_.reserve(wheel_vel_cmds_.size() + steering_pos_cmds_.size());
+    command_itfs_.reserve(wheel_vel_cmds_.size() + steering_vel_cmds_.size());
 
     // Clear and reserve storage for shared_ptrs to keep interfaces alive
     state_interface_ptrs_.clear();
     state_interface_ptrs_.reserve(wheel_vel_states_.size() + steering_pos_states_.size());
     command_interface_ptrs_.clear();
-    command_interface_ptrs_.reserve(wheel_vel_cmds_.size() + steering_pos_cmds_.size());
+    command_interface_ptrs_.reserve(wheel_vel_cmds_.size() + steering_vel_cmds_.size());
 
     // Wheel velocity interfaces
     for (size_t i = 0; i < wheel_vel_states_.size(); ++i)
@@ -215,28 +215,26 @@ protected:
       command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr, nullptr));
     }
 
-    // Steering position interfaces
+    // Steering interfaces: position state (CANcoder absolute angle), velocity command (PCV)
     for (size_t i = 0; i < steering_pos_states_.size(); ++i)
     {
-      // Create state interface for member storage
+      // State: position (absolute steer angle from CANcoder)
       state_itfs_.emplace_back(
         hardware_interface::StateInterface(
           steering_joint_names_[i], HW_IF_POSITION, &steering_pos_states_[i]));
 
-      // Create shared pointer for loaned interface and store in member
       auto state_ptr = std::make_shared<hardware_interface::StateInterface>(
         steering_joint_names_[i], HW_IF_POSITION, &steering_pos_states_[i]);
       state_interface_ptrs_.push_back(state_ptr);
       state_ifs.emplace_back(hardware_interface::LoanedStateInterface(state_ptr));
 
-      // Create command interface for member storage
+      // Command: velocity (PCV steer velocity sent to sds_swerve_hw_interface)
       command_itfs_.emplace_back(
         hardware_interface::CommandInterface(
-          steering_joint_names_[i], HW_IF_POSITION, &steering_pos_cmds_[i]));
+          steering_joint_names_[i], HW_IF_VELOCITY, &steering_vel_cmds_[i]));
 
-      // Create shared pointer for loaned interface and store in member
       auto cmd_ptr = std::make_shared<hardware_interface::CommandInterface>(
-        steering_joint_names_[i], HW_IF_POSITION, &steering_pos_cmds_[i]);
+        steering_joint_names_[i], HW_IF_VELOCITY, &steering_vel_cmds_[i]);
       command_interface_ptrs_.push_back(cmd_ptr);
       command_ifs.emplace_back(hardware_interface::LoanedCommandInterface(cmd_ptr, nullptr));
     }
@@ -307,8 +305,8 @@ protected:
 
   std::vector<double> wheel_vel_states_ = {1.0, 1.0, 1.0, 1.0};
   std::vector<double> wheel_vel_cmds_ = {0.0, 0.0, 0.0, 0.0};
-  std::vector<double> steering_pos_states_ = {0.0, 0.0, 0.0, 0.0};
-  std::vector<double> steering_pos_cmds_ = {0.0, 0.0, 0.0, 0.0};
+  std::vector<double> steering_pos_states_ = {0.0, 0.0, 0.0, 0.0};  // state: position (CANcoder)
+  std::vector<double> steering_vel_cmds_ = {0.0, 0.0, 0.0, 0.0};    // cmd:   velocity (PCV)
 
   std::vector<hardware_interface::StateInterface> state_itfs_;
   std::vector<hardware_interface::CommandInterface> command_itfs_;
